@@ -1,0 +1,17 @@
+{
+  "name": "Intimate Haven — Quotes & Invoices",
+  "short_name": "Intimate Haven",
+  "description": "Quotation and invoicing app for Intimate Haven — elevating comfort, inspiring wellness.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#FBF8F6",
+  "theme_color": "#C6537B",
+  "orientation": "portrait-primary",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
