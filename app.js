@@ -5,7 +5,7 @@
 
 const CONFIG = {
   // Paste your deployed Apps Script Web App URL here (ends in /exec)
-  API_URL: 'PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE'
+  API_URL: https://script.google.com/macros/s/AKfycby4K6-R-c-6VLi8ndv-gkfJ8lJIApETRjdKyol8odVS8JXh93cbN79LTqRws0JwiL0Y/exec
 };
 
 const CURRENCIES = {
