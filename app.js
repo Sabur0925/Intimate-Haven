@@ -138,11 +138,11 @@ function logout(silent) {
 
 const NAV_ITEMS = [
   { id: 'dashboard', label: 'Dashboard', icon: '◆' },
-  { id: 'quotes', label: 'Quotations', icon: '▤' },
-  { id: 'invoices', label: 'Invoices', icon: '▥' },
-  { id: 'orders', label: 'Orders', icon: '⬢' },
-  { id: 'clients', label: 'Clients', icon: '◐' },
   { id: 'products', label: 'Products', icon: '❖' },
+  { id: 'quotes', label: 'Quotations', icon: '▤' },
+  { id: 'orders', label: 'Orders', icon: '⬢' },
+  { id: 'invoices', label: 'Invoices', icon: '▥' },
+  { id: 'clients', label: 'Clients', icon: '◐' },
   { id: 'reports', label: 'Reports', icon: '▲' },
   { id: 'settings', label: 'Settings', icon: '✦' }
 ];
@@ -1300,3 +1300,4 @@ async function saveSettingsForm() {
   else toast(res.error);
   function v(id) { return document.getElementById(id).value; }
 }
+
