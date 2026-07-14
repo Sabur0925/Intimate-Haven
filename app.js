@@ -5,16 +5,20 @@
 
 const CONFIG = {
   // Paste your deployed Apps Script Web App URL here (ends in /exec)
-  API_URL: 'https://script.google.com/macros/s/AKfycby4K6-R-c-6VLi8ndv-gkfJ8lJIApETRjdKyol8odVS8JXh93cbN79LTqRws0JwiL0Y/exec'
+  API_URL: 'PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE'
 };
 
+// NGN/GHS/KES are spelled out ("NGN ", not "₦") on purpose: the PDF export
+// rasterizes the page with html2canvas before fonts always finish loading,
+// and those glyphs are the ones most likely to come out as a broken box.
+// Plain letters always render correctly in every font, on every device.
 const CURRENCIES = {
-  NGN: { symbol: '₦', label: 'Naira' },
+  NGN: { symbol: 'NGN ', label: 'Naira' },
   USD: { symbol: '$', label: 'US Dollar' },
   GBP: { symbol: '£', label: 'Pound' },
   EUR: { symbol: '€', label: 'Euro' },
-  GHS: { symbol: 'GH₵', label: 'Cedi' },
-  KES: { symbol: 'KSh', label: 'Kenyan Shilling' },
+  GHS: { symbol: 'GHS ', label: 'Cedi' },
+  KES: { symbol: 'KES ', label: 'Kenyan Shilling' },
   ZAR: { symbol: 'R', label: 'Rand' }
 };
 
@@ -23,6 +27,7 @@ const state = {
   user: JSON.parse(localStorage.getItem('ih_user') || 'null'),
   settings: null,
   clients: [],
+  products: [],
   quotes: [],
   invoices: [],
   view: 'dashboard'
@@ -135,6 +140,7 @@ const NAV_ITEMS = [
   { id: 'quotes', label: 'Quotations', icon: '▤' },
   { id: 'invoices', label: 'Invoices', icon: '▥' },
   { id: 'clients', label: 'Clients', icon: '◐' },
+  { id: 'products', label: 'Products', icon: '❖' },
   { id: 'settings', label: 'Settings', icon: '✦' }
 ];
 
@@ -154,7 +160,7 @@ function renderApp() {
     </div>
     <div class="layout">
       <nav class="tabs">
-        ${NAV_ITEMS.filter(n => n.id !== 'settings' || true).map(n => `
+        ${NAV_ITEMS.map(n => `
           <button data-view="${n.id}" class="${state.view === n.id ? 'active' : ''}">${n.icon}&nbsp;&nbsp;${n.label}</button>
         `).join('')}
       </nav>
@@ -179,11 +185,12 @@ function renderApp() {
 
 async function loadAllData() {
   showLoading();
-  const [settingsRes, clientsRes, quotesRes, invoicesRes] = await Promise.all([
-    api('getSettings', {}), api('listClients', {}), api('listQuotes', {}), api('listInvoices', {})
+  const [settingsRes, clientsRes, productsRes, quotesRes, invoicesRes] = await Promise.all([
+    api('getSettings', {}), api('listClients', {}), api('listProducts', {}), api('listQuotes', {}), api('listInvoices', {})
   ]);
   if (settingsRes.ok) state.settings = settingsRes.settings;
   if (clientsRes.ok) state.clients = clientsRes.clients;
+  if (productsRes.ok) state.products = productsRes.products;
   if (quotesRes.ok) state.quotes = quotesRes.quotes.reverse();
   if (invoicesRes.ok) state.invoices = invoicesRes.invoices.reverse();
   renderView();
@@ -201,6 +208,7 @@ function renderView() {
   if (state.view === 'quotes') return renderQuotesList(c);
   if (state.view === 'invoices') return renderInvoicesList(c);
   if (state.view === 'clients') return renderClients(c);
+  if (state.view === 'products') return renderProducts(c);
   if (state.view === 'settings') return renderSettings(c);
 }
 
@@ -211,7 +219,7 @@ function renderView() {
 function renderDashboard(c) {
   const outstanding = state.invoices.filter(i => i.status !== 'paid')
     .reduce((sum, i) => sum + (Number(i.total) - Number(i.amountPaid || 0)), 0);
-  const paidThisSet = state.invoices.filter(i => i.status === 'paid').length;
+  const paidCount = state.invoices.filter(i => i.status === 'paid').length;
   const draftQuotes = state.quotes.filter(q => q.status === 'draft' || q.status === 'sent').length;
 
   c.innerHTML = `
@@ -219,17 +227,16 @@ function renderDashboard(c) {
     <div class="section-sub">Here's what's happening across your quotes and invoices.</div>
     <div class="grid-3">
       <div class="card"><div class="muted" style="font-size:12.5px;">Open quotations</div><div class="display" style="font-size:32px;margin-top:6px;">${draftQuotes}</div></div>
-      <div class="card"><div class="muted" style="font-size:12.5px;">Invoices paid</div><div class="display" style="font-size:32px;margin-top:6px;">${paidThisSet}</div></div>
+      <div class="card"><div class="muted" style="font-size:12.5px;">Invoices paid</div><div class="display" style="font-size:32px;margin-top:6px;">${paidCount}</div></div>
       <div class="card"><div class="muted" style="font-size:12.5px;">Outstanding balance</div><div class="display" style="font-size:32px;margin-top:6px;">${formatMoneyMixed(outstanding)}</div></div>
     </div>
     <div class="card" style="margin-top:16px;">
-      <div class="flex-between">
-        <div><h3>Quick actions</h3></div>
-      </div>
+      <h3>Quick actions</h3>
       <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:12px;">
         <button class="btn btn-primary" id="qaQuote">+ New quotation</button>
         <button class="btn btn-ghost" id="qaInvoice">+ New invoice</button>
         <button class="btn btn-ghost" id="qaClient">+ Add client</button>
+        <button class="btn btn-ghost" id="qaProduct">+ Add product</button>
       </div>
     </div>
     <div class="card" style="margin-top:16px;">
@@ -240,6 +247,7 @@ function renderDashboard(c) {
   document.getElementById('qaQuote').addEventListener('click', () => openDocEditor('quote'));
   document.getElementById('qaInvoice').addEventListener('click', () => openDocEditor('invoice'));
   document.getElementById('qaClient').addEventListener('click', () => openClientModal());
+  document.getElementById('qaProduct').addEventListener('click', () => openProductModal());
 }
 
 function renderRecentTable() {
@@ -354,6 +362,110 @@ function openClientModal(client) {
 }
 
 /* ---------------------------------------------------------------------- */
+/* Products (catalog: category + sizes/variants + price, reusable later)  */
+/* ---------------------------------------------------------------------- */
+
+function renderProducts(c) {
+  const categories = [...new Set(state.products.map(p => p.category || 'Uncategorized'))];
+  c.innerHTML = `
+    <div class="flex-between">
+      <div><div class="section-title">Products</div><div class="section-sub">Save a product once — with its sizes and prices — then pick it straight into any quote or invoice.</div></div>
+      <button class="btn btn-primary" id="addProductBtn">+ Add product</button>
+    </div>
+    ${state.products.length ? categories.map(cat => `
+      <div class="card">
+        <h3 style="margin-bottom:10px;">${escapeHtml(cat)}</h3>
+        <div class="table-wrap"><table><thead><tr><th>Product</th><th>Unit</th><th>Sizes / prices</th><th></th></tr></thead><tbody>
+          ${state.products.filter(p => (p.category || 'Uncategorized') === cat).map(p => `<tr>
+            <td>${escapeHtml(p.name)}</td><td>${escapeHtml(p.unit)}</td>
+            <td>${(p.variants || []).map(v => `${escapeHtml(v.label)}: ${formatMoney(v.price, state.settings?.defaultCurrency)}`).join(' · ')}</td>
+            <td class="row-actions">
+              <button class="link-btn" data-edit-p="${p.id}">Edit</button>
+              <button class="link-btn" style="color:var(--danger)" data-del-p="${p.id}">Delete</button>
+            </td>
+          </tr>`).join('')}
+        </tbody></table></div>
+      </div>
+    `).join('') : `<div class="card"><div class="empty-state">No products saved yet. Add your first one — e.g. "Bra" with sizes 32B, 34C and their prices.</div></div>`}
+  `;
+  document.getElementById('addProductBtn').addEventListener('click', () => openProductModal());
+  c.querySelectorAll('[data-edit-p]').forEach(b => b.addEventListener('click', () => openProductModal(state.products.find(x => x.id === b.dataset.editP))));
+  c.querySelectorAll('[data-del-p]').forEach(b => b.addEventListener('click', async () => {
+    if (!confirm('Delete this product?')) return;
+    const res = await api('deleteProduct', { id: b.dataset.delP });
+    if (res.ok) { state.products = state.products.filter(x => x.id !== b.dataset.delP); renderView(); toast('Product deleted.'); }
+    else toast(res.error);
+  }));
+}
+
+let productVariantRows = [];
+
+function openProductModal(product) {
+  const isEdit = !!product;
+  productVariantRows = isEdit && product.variants?.length ? JSON.parse(JSON.stringify(product.variants)) : [{ label: 'Standard', price: 0 }];
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-backdrop';
+  wrap.innerHTML = `
+    <div class="modal">
+      <h3>${isEdit ? 'Edit product' : 'Add product'}</h3>
+      <div class="field"><label>Product name</label><input type="text" id="pName" value="${escapeHtml(product?.name)}" placeholder="e.g. Lace Bra" /></div>
+      <div class="grid-2">
+        <div class="field"><label>Category</label><input type="text" id="pCategory" value="${escapeHtml(product?.category)}" placeholder="e.g. Bras, Robes, Wellness kits" list="catList" />
+          <datalist id="catList">${[...new Set(state.products.map(p => p.category))].map(cat => `<option value="${escapeHtml(cat)}">`).join('')}</datalist>
+        </div>
+        <div class="field"><label>Unit (optional)</label><input type="text" id="pUnit" value="${escapeHtml(product?.unit)}" placeholder="e.g. piece, set" /></div>
+      </div>
+      <label style="margin-top:6px;">Sizes &amp; prices</label>
+      <div id="variantRows"></div>
+      <button class="btn btn-ghost btn-sm" id="addVariantBtn" type="button">+ Add size</button>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" id="pCancel">Cancel</button>
+        <button class="btn btn-primary" id="pSave">Save</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+
+  function renderVariantRows() {
+    const box = wrap.querySelector('#variantRows');
+    box.innerHTML = productVariantRows.map((v, i) => `
+      <div style="display:flex; gap:8px; margin-bottom:8px;" data-vidx="${i}">
+        <input type="text" class="v-label" value="${escapeHtml(v.label)}" placeholder="Size / label (e.g. 34C, One size)" style="flex:2;" />
+        <input type="number" class="v-price" value="${v.price}" placeholder="Price" step="0.01" style="flex:1;" />
+        <button class="btn btn-ghost btn-sm" data-rm-v="${i}" type="button">✕</button>
+      </div>
+    `).join('');
+    box.querySelectorAll('.v-label').forEach((el, i) => el.addEventListener('input', () => { productVariantRows[i].label = el.value; }));
+    box.querySelectorAll('.v-price').forEach((el, i) => el.addEventListener('input', () => { productVariantRows[i].price = Number(el.value || 0); }));
+    box.querySelectorAll('[data-rm-v]').forEach(b => b.addEventListener('click', () => {
+      productVariantRows.splice(Number(b.dataset.rmV), 1);
+      if (!productVariantRows.length) productVariantRows.push({ label: 'Standard', price: 0 });
+      renderVariantRows();
+    }));
+  }
+  renderVariantRows();
+
+  wrap.querySelector('#addVariantBtn').addEventListener('click', () => { productVariantRows.push({ label: '', price: 0 }); renderVariantRows(); });
+  wrap.querySelector('#pCancel').addEventListener('click', () => wrap.remove());
+  wrap.querySelector('#pSave').addEventListener('click', async () => {
+    const payload = {
+      id: product?.id,
+      name: wrap.querySelector('#pName').value.trim(),
+      category: wrap.querySelector('#pCategory').value.trim() || 'Uncategorized',
+      unit: wrap.querySelector('#pUnit').value.trim(),
+      variants: productVariantRows.filter(v => v.label.trim())
+    };
+    if (!payload.name) return toast('Product name is required.');
+    if (!payload.variants.length) return toast('Add at least one size and price.');
+    const res = await api(isEdit ? 'updateProduct' : 'addProduct', { product: payload });
+    if (res.ok) {
+      if (isEdit) Object.assign(product, payload);
+      else state.products.unshift({ ...payload, id: res.id, createdAt: new Date().toISOString() });
+      wrap.remove(); renderView(); toast('Product saved.');
+    } else toast(res.error);
+  });
+}
+
+/* ---------------------------------------------------------------------- */
 /* Quotes list                                                            */
 /* ---------------------------------------------------------------------- */
 
@@ -455,12 +567,13 @@ function openPaymentModal(inv) {
 /* ---------------------------------------------------------------------- */
 
 let editorRows = [];
+let editorClient = { phone: '', email: '', address: '' };
 
 function openDocEditor(kind) {
-  editorRows = [{ desc: '', qty: 1, price: 0 }];
+  editorRows = [{ productId: '', desc: '', qty: 1, price: 0 }];
+  editorClient = { phone: '', email: '', address: '' };
   const c = document.getElementById('content');
   const currency = state.settings?.defaultCurrency || 'NGN';
-  const taxRate = Number(state.settings?.taxRate || 0);
 
   c.innerHTML = `
     <div class="flex-between">
@@ -474,13 +587,20 @@ function openDocEditor(kind) {
           <select id="edClient">
             <option value="">— Select existing client —</option>
             ${state.clients.map(cl => `<option value="${cl.id}">${escapeHtml(cl.name)}</option>`).join('')}
-            <option value="__new__">+ New client (type name below)</option>
+            <option value="__new__">+ New client (type details below)</option>
           </select>
         </div>
         <div class="field">
           <label>Client name (if new)</label>
           <input type="text" id="edClientName" placeholder="Full name" />
         </div>
+      </div>
+      <div class="grid-3" id="clientContactRow" style="display:none;">
+        <div class="field"><label>Phone</label><input type="tel" id="edClientPhone" placeholder="Phone number" /></div>
+        <div class="field"><label>Email</label><input type="email" id="edClientEmail" placeholder="Email address" /></div>
+        <div class="field"><label>Address</label><input type="text" id="edClientAddress" placeholder="Delivery / billing address" /></div>
+      </div>
+      <div class="grid-2">
         <div class="field">
           <label>${kind === 'quote' ? 'Quote date' : 'Invoice date'}</label>
           <input type="date" id="edDate" value="${new Date().toISOString().slice(0, 10)}" />
@@ -519,35 +639,95 @@ function openDocEditor(kind) {
 
   document.getElementById('backBtn').addEventListener('click', () => renderView());
   document.getElementById('cancelDocBtn').addEventListener('click', () => renderView());
-  document.getElementById('addRowBtn').addEventListener('click', () => { editorRows.push({ desc: '', qty: 1, price: 0 }); renderItemRows(); });
+  document.getElementById('addRowBtn').addEventListener('click', () => { editorRows.push({ productId: '', desc: '', qty: 1, price: 0 }); renderItemRows(); });
+
   document.getElementById('edClient').addEventListener('change', (e) => {
-    document.getElementById('edClientName').style.display = e.target.value === '__new__' ? 'block' : 'none';
+    const contactRow = document.getElementById('clientContactRow');
+    const nameField = document.getElementById('edClientName');
+    if (e.target.value === '__new__') {
+      contactRow.style.display = 'grid';
+      nameField.style.display = 'block';
+      document.getElementById('edClientPhone').value = '';
+      document.getElementById('edClientEmail').value = '';
+      document.getElementById('edClientAddress').value = '';
+    } else if (e.target.value) {
+      const cl = state.clients.find(x => x.id === e.target.value);
+      contactRow.style.display = 'grid';
+      nameField.style.display = 'none';
+      document.getElementById('edClientPhone').value = cl?.phone || '';
+      document.getElementById('edClientEmail').value = cl?.email || '';
+      document.getElementById('edClientAddress').value = cl?.address || '';
+    } else {
+      contactRow.style.display = 'none';
+      nameField.style.display = 'block';
+    }
   });
   document.getElementById('edClientName').style.display = 'none';
-  ['edDiscount'].forEach(id => document.getElementById(id).addEventListener('input', renderTotals));
+  document.getElementById('edDiscount').addEventListener('input', renderTotals);
+  document.getElementById('edCurrency').addEventListener('change', renderTotals);
 
   renderItemRows();
-
   document.getElementById('saveDocBtn').addEventListener('click', () => saveDoc(kind));
+}
+
+// Flattens the product catalog into <option> choices, one per size/variant.
+function productOptions() {
+  const opts = [];
+  state.products.forEach(p => {
+    (p.variants || []).forEach((v, vi) => {
+      opts.push({
+        value: `${p.id}::${vi}`,
+        label: `${p.name}${v.label && v.label !== 'Standard' ? ' — ' + v.label : ''} (${formatMoney(v.price, state.settings?.defaultCurrency)})`,
+        category: p.category || 'Uncategorized',
+        desc: `${p.name}${v.label && v.label !== 'Standard' ? ' — ' + v.label : ''}`,
+        price: v.price
+      });
+    });
+  });
+  return opts;
 }
 
 function renderItemRows() {
   const box = document.getElementById('itemRows');
+  const opts = productOptions();
+  const cats = [...new Set(opts.map(o => o.category))];
+
   box.innerHTML = editorRows.map((r, idx) => `
-    <div class="item-row" data-idx="${idx}">
-      <div class="field" style="margin:0;"><label>Description</label><input type="text" class="row-desc" value="${escapeHtml(r.desc)}" placeholder="Item or service" /></div>
-      <div class="field" style="margin:0;"><label>Qty</label><input type="number" class="row-qty" value="${r.qty}" min="0" step="1" /></div>
-      <div class="field" style="margin:0;"><label>Unit price</label><input type="number" class="row-price" value="${r.price}" min="0" step="0.01" /></div>
-      <div class="field" style="margin:0;"><label>Line total</label><input type="text" class="row-total" value="${(r.qty * r.price).toFixed(2)}" disabled /></div>
-      <button class="btn btn-ghost btn-sm" style="height:38px;" data-remove="${idx}">✕</button>
+    <div class="card" style="padding:14px; margin-bottom:10px; box-shadow:none; border-color:var(--line);" data-idx="${idx}">
+      <div class="field" style="margin-bottom:8px;">
+        <label>Pick a saved product (optional)</label>
+        <select class="row-product">
+          <option value="">— Custom item / type below —</option>
+          ${cats.map(cat => `<optgroup label="${escapeHtml(cat)}">
+            ${opts.filter(o => o.category === cat).map(o => `<option value="${o.value}" ${r.productId === o.value ? 'selected' : ''}>${escapeHtml(o.label)}</option>`).join('')}
+          </optgroup>`).join('')}
+        </select>
+      </div>
+      <div class="item-row">
+        <div class="field" style="margin:0;"><label>Description</label><input type="text" class="row-desc" value="${escapeHtml(r.desc)}" placeholder="Item or service" /></div>
+        <div class="field" style="margin:0;"><label>Qty</label><input type="number" class="row-qty" value="${r.qty}" min="0" step="1" /></div>
+        <div class="field" style="margin:0;"><label>Unit price</label><input type="number" class="row-price" value="${r.price}" min="0" step="0.01" /></div>
+        <div class="field" style="margin:0;"><label>Line total</label><input type="text" class="row-total" value="${(r.qty * r.price).toFixed(2)}" disabled /></div>
+        <button class="btn btn-ghost btn-sm" style="height:38px;" data-remove="${idx}">✕</button>
+      </div>
     </div>
   `).join('');
+
+  box.querySelectorAll('.row-product').forEach((el, i) => el.addEventListener('change', () => {
+    editorRows[i].productId = el.value;
+    if (el.value) {
+      const [pid, vi] = el.value.split('::');
+      const opt = opts.find(o => o.value === el.value);
+      if (opt) { editorRows[i].desc = opt.desc; editorRows[i].price = opt.price; }
+    }
+    renderItemRows();
+  }));
   box.querySelectorAll('.row-desc').forEach((el, i) => el.addEventListener('input', () => { editorRows[i].desc = el.value; }));
   box.querySelectorAll('.row-qty').forEach((el, i) => el.addEventListener('input', () => { editorRows[i].qty = Number(el.value || 0); syncRowTotal(i); renderTotals(); }));
   box.querySelectorAll('.row-price').forEach((el, i) => el.addEventListener('input', () => { editorRows[i].price = Number(el.value || 0); syncRowTotal(i); renderTotals(); }));
   box.querySelectorAll('[data-remove]').forEach(b => b.addEventListener('click', () => {
     editorRows.splice(Number(b.dataset.remove), 1);
-    if (!editorRows.length) editorRows.push({ desc: '', qty: 1, price: 0 });
+    if (!editorRows.length) editorRows.push({ productId: '', desc: '', qty: 1, price: 0 });
     renderItemRows(); renderTotals();
   }));
   renderTotals();
@@ -585,11 +765,18 @@ function renderTotals() {
 async function saveDoc(kind) {
   const clientSel = document.getElementById('edClient').value;
   let clientId = '', clientName = '';
+  const clientPhone = document.getElementById('edClientPhone')?.value.trim() || '';
+  const clientEmail = document.getElementById('edClientEmail')?.value.trim() || '';
+  const clientAddress = document.getElementById('edClientAddress')?.value.trim() || '';
+
   if (clientSel === '__new__') {
     clientName = document.getElementById('edClientName').value.trim();
-    if (!clientName) return toast('Please enter the new client\'s name.');
-    const res = await api('addClient', { client: { name: clientName } });
-    if (res.ok) { clientId = res.id; state.clients.unshift({ id: res.id, name: clientName }); }
+    if (!clientName) return toast("Please enter the new client's name.");
+    const res = await api('addClient', { client: { name: clientName, phone: clientPhone, email: clientEmail, address: clientAddress } });
+    if (res.ok) {
+      clientId = res.id;
+      state.clients.unshift({ id: res.id, name: clientName, phone: clientPhone, email: clientEmail, address: clientAddress });
+    }
   } else if (clientSel) {
     clientId = clientSel;
     clientName = state.clients.find(c => c.id === clientSel)?.name || '';
@@ -609,7 +796,7 @@ async function saveDoc(kind) {
   const notes = document.getElementById('edNotes').value.trim();
 
   const payload = {
-    clientId, clientName, items, currency,
+    clientId, clientName, clientPhone, clientEmail, clientAddress, items, currency,
     subtotal: t.subtotal, discount: t.discount, tax: t.tax, total: t.total, notes, date
   };
   if (kind === 'quote') payload.validUntil = date2; else payload.dueDate = date2;
@@ -632,21 +819,31 @@ async function exportPdf(kind, doc) {
   const s = state.settings || {};
   const items = doc.items || [];
   const hasPayInfo = s.bankName || s.altPaymentMethod;
+  const hasClientContact = doc.clientPhone || doc.clientEmail || doc.clientAddress;
 
   const html = `
     <div class="doc-sheet" id="pdfSheet">
+      <div class="doc-band"></div>
       <div class="doc-head">
         <img src="icons/logo.png" />
         <div class="co">
-          <b style="font-size:14px;color:#2B2422;">${escapeHtml(s.companyName || 'Intimate Haven')}</b><br/>
-          ${escapeHtml(s.companyAddress || '')}<br/>
-          ${escapeHtml(s.companyPhone || '')} ${s.companyEmail ? '· ' + escapeHtml(s.companyEmail) : ''}
+          <b>${escapeHtml(s.companyName || 'Intimate Haven')}</b>
+          ${s.companyAddress ? `<span>${escapeHtml(s.companyAddress)}</span>` : ''}
+          <span>${[s.companyPhone, s.companyEmail].filter(Boolean).map(escapeHtml).join('  ·  ')}</span>
         </div>
       </div>
       <div class="doc-title">${kind === 'quote' ? 'Quotation' : 'Invoice'}</div>
       <div class="muted">${doc.number}</div>
       <div class="doc-meta">
-        <div class="block"><b>Billed to</b>${escapeHtml(doc.clientName)}</div>
+        <div class="block">
+          <b>Billed to</b>
+          ${escapeHtml(doc.clientName)}
+          ${hasClientContact ? `<span class="doc-client-contact">
+            ${doc.clientPhone ? escapeHtml(doc.clientPhone) : ''}
+            ${doc.clientEmail ? (doc.clientPhone ? ' · ' : '') + escapeHtml(doc.clientEmail) : ''}
+            ${doc.clientAddress ? `<br/>${escapeHtml(doc.clientAddress)}` : ''}
+          </span>` : ''}
+        </div>
         <div class="block"><b>Date</b>${formatDate(doc.date)}</div>
         <div class="block"><b>${kind === 'quote' ? 'Valid until' : 'Due date'}</b>${formatDate(kind === 'quote' ? doc.validUntil : doc.dueDate)}</div>
       </div>
@@ -664,10 +861,10 @@ async function exportPdf(kind, doc) {
         ${kind === 'invoice' ? `<div class="row"><span>Amount paid</span><span>${formatMoney(doc.amountPaid, doc.currency)}</span></div>
         <div class="row"><span>Balance due</span><span>${formatMoney(Number(doc.total) - Number(doc.amountPaid || 0), doc.currency)}</span></div>` : ''}
       </div>
-      ${doc.notes ? `<div style="margin-top:18px;font-size:12.5px;"><b>Notes:</b> ${escapeHtml(doc.notes)}</div>` : ''}
-      ${kind === 'invoice' && hasPayInfo ? `
+      ${doc.notes ? `<div class="doc-notes"><b>Notes:</b> ${escapeHtml(doc.notes)}</div>` : ''}
+      ${hasPayInfo ? `
       <div class="doc-pay">
-        <b>Payment details</b>
+        <b>Payment / account details</b>
         ${s.bankName ? `Bank: ${escapeHtml(s.bankName)}<br/>Account name: ${escapeHtml(s.bankAccountName)}<br/>Account number: ${escapeHtml(s.bankAccountNumber)}<br/>` : ''}
         ${s.altPaymentMethod ? `${escapeHtml(s.altPaymentMethod)}: ${escapeHtml(s.altPaymentDetails)}` : ''}
       </div>` : ''}
@@ -680,6 +877,11 @@ async function exportPdf(kind, doc) {
 
   toast('Preparing PDF…');
   try {
+    // Make sure web fonts are fully loaded before html2canvas rasterizes the
+    // sheet — otherwise currency symbols / letters can render as blank boxes.
+    if (document.fonts && document.fonts.ready) await document.fonts.ready;
+    await new Promise(r => setTimeout(r, 50));
+
     const el = document.getElementById('pdfSheet');
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF('p', 'pt', 'a4');
@@ -688,6 +890,7 @@ async function exportPdf(kind, doc) {
       autoPaging: 'text',
       width: 555,
       windowWidth: 750,
+      html2canvas: { scale: 2, useCORS: true },
       callback: function (doc2) {
         doc2.save(`${doc.number}-${(doc.clientName || 'client').replace(/\s+/g, '_')}.pdf`);
       }
@@ -721,13 +924,13 @@ function renderSettings(c) {
         <div class="field"><label>Default currency</label><select id="stCurrency" ${!isAdmin ? 'disabled' : ''}>${Object.keys(CURRENCIES).map(k => `<option value="${k}" ${k === s.defaultCurrency ? 'selected' : ''}>${k}</option>`).join('')}</select></div>
         <div class="field"><label>Tax label</label><input type="text" id="stTaxLabel" value="${escapeHtml(s.taxLabel)}" ${!isAdmin ? 'disabled' : ''}/></div>
         <div class="field"><label>Tax rate (%)</label><input type="number" id="stTaxRate" value="${escapeHtml(s.taxRate)}" ${!isAdmin ? 'disabled' : ''}/></div>
-        <div class="field" style="grid-column:1/-1;"><label>Invoice footer note</label><input type="text" id="stFooter" value="${escapeHtml(s.invoiceFooterNote)}" ${!isAdmin ? 'disabled' : ''}/></div>
+        <div class="field" style="grid-column:1/-1;"><label>Invoice / quote footer note</label><input type="text" id="stFooter" value="${escapeHtml(s.invoiceFooterNote)}" ${!isAdmin ? 'disabled' : ''}/></div>
       </div>
     </div>
 
     <div class="card">
       <h3>Payment account details</h3>
-      <div class="section-sub" style="margin-top:4px;">These appear on every invoice PDF so clients know where to pay.</div>
+      <div class="section-sub" style="margin-top:4px;">These appear on every quotation and invoice PDF so clients know where to pay.</div>
       <div class="grid-2">
         <div class="field"><label>Bank name</label><input type="text" id="stBankName" value="${escapeHtml(s.bankName)}" ${!isAdmin ? 'disabled' : ''}/></div>
         <div class="field"><label>Account name</label><input type="text" id="stBankAccName" value="${escapeHtml(s.bankAccountName)}" ${!isAdmin ? 'disabled' : ''}/></div>
@@ -754,7 +957,7 @@ function renderStaffSection() {
         <button class="btn btn-ghost btn-sm" id="addStaffBtn">+ Add staff</button>
       </div>
       <div class="table-wrap" style="margin-top:10px;">
-        <table><thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Status</th><th></th></tr></thead><tbody>
+        <table><thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Status</th><th></th></tr></thead>
           <tbody id="staffTbody"><tr><td colspan="5" class="muted">Loading…</td></tr></tbody>
         </table>
       </div>
