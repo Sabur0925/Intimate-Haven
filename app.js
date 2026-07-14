@@ -1040,3 +1040,6 @@ async function saveSettingsForm() {
   else toast(res.error);
   function v(id) { return document.getElementById(id).value; }
 }
+
+  function v(id) { return document.getElementById(id).value; }
+}
