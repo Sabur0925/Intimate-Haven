@@ -30,6 +30,7 @@ const state = {
   products: [],
   quotes: [],
   invoices: [],
+  orders: [],
   view: 'dashboard'
 };
 
@@ -139,8 +140,10 @@ const NAV_ITEMS = [
   { id: 'dashboard', label: 'Dashboard', icon: '◆' },
   { id: 'quotes', label: 'Quotations', icon: '▤' },
   { id: 'invoices', label: 'Invoices', icon: '▥' },
+  { id: 'orders', label: 'Orders', icon: '⬢' },
   { id: 'clients', label: 'Clients', icon: '◐' },
   { id: 'products', label: 'Products', icon: '❖' },
+  { id: 'reports', label: 'Reports', icon: '▲' },
   { id: 'settings', label: 'Settings', icon: '✦' }
 ];
 
@@ -185,14 +188,15 @@ function renderApp() {
 
 async function loadAllData() {
   showLoading();
-  const [settingsRes, clientsRes, productsRes, quotesRes, invoicesRes] = await Promise.all([
-    api('getSettings', {}), api('listClients', {}), api('listProducts', {}), api('listQuotes', {}), api('listInvoices', {})
+  const [settingsRes, clientsRes, productsRes, quotesRes, invoicesRes, ordersRes] = await Promise.all([
+    api('getSettings', {}), api('listClients', {}), api('listProducts', {}), api('listQuotes', {}), api('listInvoices', {}), api('listOrders', {})
   ]);
   if (settingsRes.ok) state.settings = settingsRes.settings;
   if (clientsRes.ok) state.clients = clientsRes.clients;
   if (productsRes.ok) state.products = productsRes.products;
   if (quotesRes.ok) state.quotes = quotesRes.quotes.reverse();
   if (invoicesRes.ok) state.invoices = invoicesRes.invoices.reverse();
+  if (ordersRes.ok) state.orders = ordersRes.orders.reverse();
   renderView();
 }
 
@@ -207,8 +211,10 @@ function renderView() {
   if (state.view === 'dashboard') return renderDashboard(c);
   if (state.view === 'quotes') return renderQuotesList(c);
   if (state.view === 'invoices') return renderInvoicesList(c);
+  if (state.view === 'orders') return renderOrders(c);
   if (state.view === 'clients') return renderClients(c);
   if (state.view === 'products') return renderProducts(c);
+  if (state.view === 'reports') return renderReports(c);
   if (state.view === 'settings') return renderSettings(c);
 }
 
@@ -482,9 +488,11 @@ function renderQuotesList(c) {
           <td><span class="badge badge-${q.status}">${q.status}</span></td>
           <td class="row-actions">
             <button class="link-btn" data-pdf="${q.id}">PDF</button>
+            <button class="link-btn" data-edit-q="${q.id}">Edit</button>
             ${q.status === 'draft' ? `<button class="link-btn" data-send="${q.id}">Mark sent</button>` : ''}
             ${q.status === 'sent' ? `<button class="link-btn" data-accept="${q.id}">Mark accepted</button><button class="link-btn" style="color:var(--danger)" data-decline="${q.id}">Decline</button>` : ''}
             ${q.status === 'accepted' ? `<button class="link-btn" data-convert="${q.id}">Convert to invoice</button>` : ''}
+            <button class="link-btn" style="color:var(--danger)" data-del-q="${q.id}">Delete</button>
           </td>
         </tr>`).join('')}
       </tbody></table></div>` : `<div class="empty-state">No quotations yet. Create your first one.</div>`}
@@ -492,12 +500,19 @@ function renderQuotesList(c) {
   `;
   document.getElementById('newQuoteBtn').addEventListener('click', () => openDocEditor('quote'));
   c.querySelectorAll('[data-pdf]').forEach(b => b.addEventListener('click', () => exportPdf('quote', state.quotes.find(x => x.id === b.dataset.pdf))));
+  c.querySelectorAll('[data-edit-q]').forEach(b => b.addEventListener('click', () => openDocEditor('quote', state.quotes.find(x => x.id === b.dataset.editQ))));
   c.querySelectorAll('[data-send]').forEach(b => b.addEventListener('click', () => setQuoteStatus(b.dataset.send, 'sent')));
   c.querySelectorAll('[data-accept]').forEach(b => b.addEventListener('click', () => setQuoteStatus(b.dataset.accept, 'accepted')));
   c.querySelectorAll('[data-decline]').forEach(b => b.addEventListener('click', () => setQuoteStatus(b.dataset.decline, 'declined')));
   c.querySelectorAll('[data-convert]').forEach(b => b.addEventListener('click', async () => {
     const res = await api('convertQuoteToInvoice', { id: b.dataset.convert });
     if (res.ok) { toast('Converted to invoice ' + res.number); await loadAllData(); state.view = 'invoices'; renderApp(); }
+    else toast(res.error);
+  }));
+  c.querySelectorAll('[data-del-q]').forEach(b => b.addEventListener('click', async () => {
+    if (!confirm('Delete this quotation? This cannot be undone.')) return;
+    const res = await api('deleteQuote', { id: b.dataset.delQ });
+    if (res.ok) { state.quotes = state.quotes.filter(x => x.id !== b.dataset.delQ); renderView(); toast('Quotation deleted.'); }
     else toast(res.error);
   }));
 }
@@ -525,7 +540,10 @@ function renderInvoicesList(c) {
           <td><span class="badge badge-${i.status}">${i.status}</span></td>
           <td class="row-actions">
             <button class="link-btn" data-pdf="${i.id}">PDF</button>
+            <button class="link-btn" data-edit-i="${i.id}">Edit</button>
             ${i.status !== 'paid' ? `<button class="link-btn" data-pay="${i.id}">Record payment</button>` : ''}
+            <button class="link-btn" data-order="${i.id}">Create order</button>
+            <button class="link-btn" style="color:var(--danger)" data-del-i="${i.id}">Delete</button>
           </td>
         </tr>`).join('')}
       </tbody></table></div>` : `<div class="empty-state">No invoices yet. Create your first one, or convert an accepted quotation.</div>`}
@@ -533,7 +551,26 @@ function renderInvoicesList(c) {
   `;
   document.getElementById('newInvoiceBtn').addEventListener('click', () => openDocEditor('invoice'));
   c.querySelectorAll('[data-pdf]').forEach(b => b.addEventListener('click', () => exportPdf('invoice', state.invoices.find(x => x.id === b.dataset.pdf))));
+  c.querySelectorAll('[data-edit-i]').forEach(b => b.addEventListener('click', () => openDocEditor('invoice', state.invoices.find(x => x.id === b.dataset.editI))));
   c.querySelectorAll('[data-pay]').forEach(b => b.addEventListener('click', () => openPaymentModal(state.invoices.find(x => x.id === b.dataset.pay))));
+  c.querySelectorAll('[data-order]').forEach(b => b.addEventListener('click', () => createOrderFromInvoice(state.invoices.find(x => x.id === b.dataset.order))));
+  c.querySelectorAll('[data-del-i]').forEach(b => b.addEventListener('click', async () => {
+    if (!confirm('Delete this invoice? This cannot be undone.')) return;
+    const res = await api('deleteInvoice', { id: b.dataset.delI });
+    if (res.ok) { state.invoices = state.invoices.filter(x => x.id !== b.dataset.delI); renderView(); toast('Invoice deleted.'); }
+    else toast(res.error);
+  }));
+}
+
+async function createOrderFromInvoice(inv) {
+  if (!inv) return;
+  const payload = {
+    invoiceId: inv.id, invoiceNumber: inv.number, clientId: inv.clientId, clientName: inv.clientName,
+    items: inv.items, currency: inv.currency, total: inv.total, notes: inv.notes
+  };
+  const res = await api('createOrder', { order: payload });
+  if (res.ok) { toast('Order ' + res.number + ' created.'); await loadAllData(); state.view = 'orders'; renderApp(); }
+  else toast(res.error);
 }
 
 function openPaymentModal(inv) {
@@ -568,16 +605,22 @@ function openPaymentModal(inv) {
 
 let editorRows = [];
 let editorClient = { phone: '', email: '', address: '' };
+let editingDocId = null;
 
-function openDocEditor(kind) {
-  editorRows = [{ productId: '', desc: '', qty: 1, price: 0 }];
-  editorClient = { phone: '', email: '', address: '' };
+function openDocEditor(kind, existingDoc) {
+  editingDocId = existingDoc ? existingDoc.id : null;
+  editorRows = existingDoc && existingDoc.items && existingDoc.items.length
+    ? existingDoc.items.map(i => ({ productId: '', desc: i.desc, qty: i.qty, price: i.price }))
+    : [{ productId: '', desc: '', qty: 1, price: 0 }];
+  editorClient = { phone: existingDoc?.clientPhone || '', email: existingDoc?.clientEmail || '', address: existingDoc?.clientAddress || '' };
   const c = document.getElementById('content');
-  const currency = state.settings?.defaultCurrency || 'NGN';
+  const currency = existingDoc?.currency || state.settings?.defaultCurrency || 'NGN';
+  const isEdit = !!existingDoc;
+  const matchedClient = existingDoc ? state.clients.find(cl => cl.id === existingDoc.clientId) : null;
 
   c.innerHTML = `
     <div class="flex-between">
-      <div><div class="section-title">${kind === 'quote' ? 'New quotation' : 'New invoice'}</div><div class="section-sub">Fill in client and line items, then save.</div></div>
+      <div><div class="section-title">${isEdit ? 'Edit' : 'New'} ${kind === 'quote' ? 'quotation' : 'invoice'}</div><div class="section-sub">Fill in client and line items, then save.</div></div>
       <button class="btn btn-ghost" id="backBtn">← Back</button>
     </div>
     <div class="card">
@@ -586,28 +629,28 @@ function openDocEditor(kind) {
           <label>Client</label>
           <select id="edClient">
             <option value="">— Select existing client —</option>
-            ${state.clients.map(cl => `<option value="${cl.id}">${escapeHtml(cl.name)}</option>`).join('')}
-            <option value="__new__">+ New client (type details below)</option>
+            ${state.clients.map(cl => `<option value="${cl.id}" ${matchedClient && cl.id === matchedClient.id ? 'selected' : ''}>${escapeHtml(cl.name)}</option>`).join('')}
+            <option value="__new__" ${existingDoc && !matchedClient ? 'selected' : ''}>+ New client (type details below)</option>
           </select>
         </div>
         <div class="field">
           <label>Client name (if new)</label>
-          <input type="text" id="edClientName" placeholder="Full name" />
+          <input type="text" id="edClientName" placeholder="Full name" value="${existingDoc && !matchedClient ? escapeHtml(existingDoc.clientName) : ''}" />
         </div>
       </div>
-      <div class="grid-3" id="clientContactRow" style="display:none;">
-        <div class="field"><label>Phone</label><input type="tel" id="edClientPhone" placeholder="Phone number" /></div>
-        <div class="field"><label>Email</label><input type="email" id="edClientEmail" placeholder="Email address" /></div>
-        <div class="field"><label>Address</label><input type="text" id="edClientAddress" placeholder="Delivery / billing address" /></div>
+      <div class="grid-3" id="clientContactRow" style="display:${existingDoc ? 'grid' : 'none'};">
+        <div class="field"><label>Phone</label><input type="tel" id="edClientPhone" placeholder="Phone number" value="${escapeHtml(editorClient.phone)}" /></div>
+        <div class="field"><label>Email</label><input type="email" id="edClientEmail" placeholder="Email address" value="${escapeHtml(editorClient.email)}" /></div>
+        <div class="field"><label>Address</label><input type="text" id="edClientAddress" placeholder="Delivery / billing address" value="${escapeHtml(editorClient.address)}" /></div>
       </div>
       <div class="grid-2">
         <div class="field">
           <label>${kind === 'quote' ? 'Quote date' : 'Invoice date'}</label>
-          <input type="date" id="edDate" value="${new Date().toISOString().slice(0, 10)}" />
+          <input type="date" id="edDate" value="${existingDoc ? new Date(existingDoc.date).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10)}" />
         </div>
         <div class="field">
           <label>${kind === 'quote' ? 'Valid until' : 'Due date'}</label>
-          <input type="date" id="edDate2" />
+          <input type="date" id="edDate2" value="${(() => { const d = kind === 'quote' ? existingDoc?.validUntil : existingDoc?.dueDate; return d ? new Date(d).toISOString().slice(0, 10) : ''; })()}" />
         </div>
         <div class="field">
           <label>Currency</label>
@@ -615,7 +658,7 @@ function openDocEditor(kind) {
         </div>
         <div class="field">
           <label>Discount (flat amount)</label>
-          <input type="number" id="edDiscount" value="0" step="0.01" />
+          <input type="number" id="edDiscount" value="${existingDoc?.discount || 0}" step="0.01" />
         </div>
       </div>
     </div>
@@ -627,12 +670,12 @@ function openDocEditor(kind) {
       <div class="totals-box" id="totalsBox"></div>
       <div class="field" style="margin-top:16px;">
         <label>Notes (optional)</label>
-        <textarea id="edNotes" placeholder="Payment terms, delivery notes, etc."></textarea>
+        <textarea id="edNotes" placeholder="Payment terms, delivery notes, etc.">${escapeHtml(existingDoc?.notes)}</textarea>
       </div>
     </div>
 
     <div style="display:flex; gap:10px; margin-top:16px;">
-      <button class="btn btn-primary" id="saveDocBtn">Save ${kind === 'quote' ? 'quotation' : 'invoice'}</button>
+      <button class="btn btn-primary" id="saveDocBtn">${isEdit ? 'Save changes' : `Save ${kind === 'quote' ? 'quotation' : 'invoice'}`}</button>
       <button class="btn btn-ghost" id="cancelDocBtn">Cancel</button>
     </div>
   `;
@@ -662,7 +705,7 @@ function openDocEditor(kind) {
       nameField.style.display = 'block';
     }
   });
-  document.getElementById('edClientName').style.display = 'none';
+  if (!existingDoc) document.getElementById('edClientName').style.display = 'none';
   document.getElementById('edDiscount').addEventListener('input', renderTotals);
   document.getElementById('edCurrency').addEventListener('change', renderTotals);
 
@@ -801,9 +844,16 @@ async function saveDoc(kind) {
   };
   if (kind === 'quote') payload.validUntil = date2; else payload.dueDate = date2;
 
-  const res = await api(kind === 'quote' ? 'createQuote' : 'createInvoice', { [kind]: payload });
+  const isEdit = !!editingDocId;
+  let res;
+  if (isEdit) {
+    res = await api(kind === 'quote' ? 'updateQuote' : 'updateInvoice', { id: editingDocId, [kind]: payload });
+  } else {
+    res = await api(kind === 'quote' ? 'createQuote' : 'createInvoice', { [kind]: payload });
+  }
   if (res.ok) {
-    toast(`${kind === 'quote' ? 'Quotation' : 'Invoice'} ${res.number} saved.`);
+    toast(isEdit ? `${kind === 'quote' ? 'Quotation' : 'Invoice'} updated.` : `${kind === 'quote' ? 'Quotation' : 'Invoice'} ${res.number} saved.`);
+    editingDocId = null;
     await loadAllData();
     state.view = kind === 'quote' ? 'quotes' : 'invoices';
     renderApp();
@@ -848,6 +898,7 @@ async function exportPdf(kind, doc) {
         <div class="block"><b>${kind === 'quote' ? 'Valid until' : 'Due date'}</b>${formatDate(kind === 'quote' ? doc.validUntil : doc.dueDate)}</div>
       </div>
       <table>
+        <colgroup><col style="width:46%"><col style="width:12%"><col style="width:21%"><col style="width:21%"></colgroup>
         <thead><tr><th>Description</th><th>Qty</th><th>Unit price</th><th>Total</th></tr></thead>
         <tbody>
           ${items.map(i => `<tr><td>${escapeHtml(i.desc)}</td><td>${i.qty}</td><td>${formatMoney(i.price, doc.currency)}</td><td>${formatMoney(i.lineTotal, doc.currency)}</td></tr>`).join('')}
@@ -873,33 +924,242 @@ async function exportPdf(kind, doc) {
   `;
   const printArea = document.getElementById('printArea');
   printArea.innerHTML = html;
-  printArea.style.display = 'block';
+  printArea.style.cssText = 'position:fixed; left:-9999px; top:0; display:block;';
 
   toast('Preparing PDF…');
   try {
-    // Make sure web fonts are fully loaded before html2canvas rasterizes the
-    // sheet — otherwise currency symbols / letters can render as blank boxes.
     if (document.fonts && document.fonts.ready) await document.fonts.ready;
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise(r => setTimeout(r, 60));
 
     const el = document.getElementById('pdfSheet');
+    // Render the sheet to a single tall image, then slice it across A4 pages.
+    // This mirrors the on-screen layout exactly — no column cut-offs, no
+    // mid-row page breaks — instead of relying on jsPDF's own (fragile)
+    // HTML-to-PDF text flow.
+    const canvas = await html2canvas(el, { scale: 2, backgroundColor: '#ffffff', windowWidth: 750 });
+
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF('p', 'pt', 'a4');
-    await pdf.html(el, {
-      margin: [20, 20, 20, 20],
-      autoPaging: 'text',
-      width: 555,
-      windowWidth: 750,
-      html2canvas: { scale: 2, useCORS: true },
-      callback: function (doc2) {
-        doc2.save(`${doc.number}-${(doc.clientName || 'client').replace(/\s+/g, '_')}.pdf`);
-      }
-    });
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const imgWidth = pageWidth;
+    const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+    const imgData = canvas.toDataURL('image/png');
+    let heightLeft = imgHeight;
+    let position = 0;
+
+    pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+    heightLeft -= pageHeight;
+    while (heightLeft > 0) {
+      position = heightLeft - imgHeight;
+      pdf.addPage();
+      pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+      heightLeft -= pageHeight;
+    }
+
+    pdf.save(`${doc.number}-${(doc.clientName || 'client').replace(/\s+/g, '_')}.pdf`);
   } catch (err) {
     toast('Could not generate PDF: ' + err);
   } finally {
-    printArea.style.display = 'none';
+    printArea.style.cssText = 'display:none;';
   }
+}
+
+/* ---------------------------------------------------------------------- */
+/* Orders (fulfillment tracking — usually created from a paid invoice)   */
+/* ---------------------------------------------------------------------- */
+
+const ORDER_STATUSES = ['pending', 'processing', 'shipped', 'delivered', 'cancelled'];
+
+function renderOrders(c) {
+  c.innerHTML = `
+    <div class="flex-between">
+      <div><div class="section-title">Orders</div><div class="section-sub">Track fulfillment after a sale — from packing to delivery.</div></div>
+      <button class="btn btn-primary" id="newOrderBtn">+ New order</button>
+    </div>
+    <div class="card">
+      ${state.orders.length ? `<div class="table-wrap"><table><thead><tr><th>Number</th><th>Date</th><th>Client</th><th>From invoice</th><th>Total</th><th>Status</th><th></th></tr></thead><tbody>
+        ${state.orders.map(o => `<tr>
+          <td>${o.number}</td><td>${formatDate(o.date)}</td><td>${escapeHtml(o.clientName)}</td><td>${escapeHtml(o.invoiceNumber) || '—'}</td><td>${formatMoney(o.total, o.currency)}</td>
+          <td>
+            <select class="order-status-select" data-order-id="${o.id}" style="padding:5px 8px; border-radius:6px; border:1px solid var(--line);">
+              ${ORDER_STATUSES.map(s => `<option value="${s}" ${o.status === s ? 'selected' : ''}>${s.charAt(0).toUpperCase() + s.slice(1)}</option>`).join('')}
+            </select>
+          </td>
+          <td class="row-actions"><button class="link-btn" style="color:var(--danger)" data-del-order="${o.id}">Delete</button></td>
+        </tr>`).join('')}
+      </tbody></table></div>` : `<div class="empty-state">No orders yet. Create one from an invoice, or start a new one here.</div>`}
+    </div>
+  `;
+  document.getElementById('newOrderBtn').addEventListener('click', () => openOrderModal());
+  c.querySelectorAll('.order-status-select').forEach(sel => sel.addEventListener('change', async () => {
+    const res = await api('updateOrderStatus', { id: sel.dataset.orderId, status: sel.value });
+    if (res.ok) { const o = state.orders.find(x => x.id === sel.dataset.orderId); o.status = sel.value; toast('Order status updated.'); }
+    else toast(res.error);
+  }));
+  c.querySelectorAll('[data-del-order]').forEach(b => b.addEventListener('click', async () => {
+    if (!confirm('Delete this order?')) return;
+    const res = await api('deleteOrder', { id: b.dataset.delOrder });
+    if (res.ok) { state.orders = state.orders.filter(x => x.id !== b.dataset.delOrder); renderView(); toast('Order deleted.'); }
+    else toast(res.error);
+  }));
+}
+
+let orderModalRows = [];
+
+function openOrderModal() {
+  orderModalRows = [{ desc: '', qty: 1, price: 0 }];
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-backdrop';
+  wrap.innerHTML = `
+    <div class="modal">
+      <h3>New order</h3>
+      <div class="field">
+        <label>Base on an existing invoice (optional)</label>
+        <select id="ordInvoice">
+          <option value="">— Start blank —</option>
+          ${state.invoices.map(i => `<option value="${i.id}">${i.number} — ${escapeHtml(i.clientName)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field"><label>Client name</label><input type="text" id="ordClient" /></div>
+      <div id="ordItemRows"></div>
+      <button class="btn btn-ghost btn-sm" id="ordAddRow" type="button">+ Add item</button>
+      <div class="field" style="margin-top:12px;"><label>Notes</label><textarea id="ordNotes"></textarea></div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" id="ordCancel">Cancel</button>
+        <button class="btn btn-primary" id="ordSave">Create order</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+
+  function renderOrdRows() {
+    const box = wrap.querySelector('#ordItemRows');
+    box.innerHTML = orderModalRows.map((r, i) => `
+      <div style="display:flex; gap:8px; margin-bottom:8px;">
+        <input type="text" class="ord-desc" value="${escapeHtml(r.desc)}" placeholder="Item" style="flex:2;" />
+        <input type="number" class="ord-qty" value="${r.qty}" placeholder="Qty" style="flex:1;" />
+        <input type="number" class="ord-price" value="${r.price}" placeholder="Price" step="0.01" style="flex:1;" />
+        <button class="btn btn-ghost btn-sm" data-rm-ord="${i}" type="button">✕</button>
+      </div>
+    `).join('');
+    box.querySelectorAll('.ord-desc').forEach((el, i) => el.addEventListener('input', () => { orderModalRows[i].desc = el.value; }));
+    box.querySelectorAll('.ord-qty').forEach((el, i) => el.addEventListener('input', () => { orderModalRows[i].qty = Number(el.value || 0); }));
+    box.querySelectorAll('.ord-price').forEach((el, i) => el.addEventListener('input', () => { orderModalRows[i].price = Number(el.value || 0); }));
+    box.querySelectorAll('[data-rm-ord]').forEach(b => b.addEventListener('click', () => {
+      orderModalRows.splice(Number(b.dataset.rmOrd), 1);
+      if (!orderModalRows.length) orderModalRows.push({ desc: '', qty: 1, price: 0 });
+      renderOrdRows();
+    }));
+  }
+  renderOrdRows();
+  wrap.querySelector('#ordAddRow').addEventListener('click', () => { orderModalRows.push({ desc: '', qty: 1, price: 0 }); renderOrdRows(); });
+
+  wrap.querySelector('#ordInvoice').addEventListener('change', (e) => {
+    const inv = state.invoices.find(i => i.id === e.target.value);
+    if (inv) {
+      wrap.querySelector('#ordClient').value = inv.clientName;
+      orderModalRows = inv.items.map(i => ({ desc: i.desc, qty: i.qty, price: i.price }));
+      renderOrdRows();
+    }
+  });
+
+  wrap.querySelector('#ordCancel').addEventListener('click', () => wrap.remove());
+  wrap.querySelector('#ordSave').addEventListener('click', async () => {
+    const invId = wrap.querySelector('#ordInvoice').value;
+    const inv = state.invoices.find(i => i.id === invId);
+    const clientName = wrap.querySelector('#ordClient').value.trim();
+    if (!clientName) return toast('Please enter a client name.');
+    const items = orderModalRows.filter(r => r.desc.trim()).map(r => ({ desc: r.desc, qty: Number(r.qty), price: Number(r.price), lineTotal: Number(r.qty) * Number(r.price) }));
+    if (!items.length) return toast('Add at least one item.');
+    const total = items.reduce((s, i) => s + i.lineTotal, 0);
+    const payload = {
+      invoiceId: inv?.id || '', invoiceNumber: inv?.number || '', clientId: inv?.clientId || '',
+      clientName, items, currency: inv?.currency || state.settings?.defaultCurrency || 'NGN', total,
+      notes: wrap.querySelector('#ordNotes').value.trim()
+    };
+    const res = await api('createOrder', { order: payload });
+    if (res.ok) { toast('Order ' + res.number + ' created.'); wrap.remove(); await loadAllData(); }
+    else toast(res.error);
+  });
+}
+
+/* ---------------------------------------------------------------------- */
+/* Reports (Sales report)                                                 */
+/* ---------------------------------------------------------------------- */
+
+function renderReports(c) {
+  c.innerHTML = `
+    <div class="section-title">Reports</div>
+    <div class="section-sub">Sales performance across your quotes and invoices.</div>
+    <div class="card">
+      <div class="flex-between">
+        <h3>Sales report</h3>
+        <div style="display:flex; gap:8px; align-items:end;">
+          <div class="field" style="margin:0;"><label>From</label><input type="date" id="repFrom" /></div>
+          <div class="field" style="margin:0;"><label>To</label><input type="date" id="repTo" /></div>
+          <button class="btn btn-ghost btn-sm" id="repRun">Run</button>
+        </div>
+      </div>
+      <div id="reportBody" style="margin-top:16px;"></div>
+    </div>
+  `;
+  document.getElementById('repRun').addEventListener('click', renderSalesReportBody);
+  renderSalesReportBody();
+}
+
+function renderSalesReportBody() {
+  const from = document.getElementById('repFrom')?.value;
+  const to = document.getElementById('repTo')?.value;
+  const inRange = (d) => {
+    if (!d) return true;
+    const t = new Date(d).getTime();
+    if (from && t < new Date(from).getTime()) return false;
+    if (to && t > new Date(to).getTime() + 86400000) return false;
+    return true;
+  };
+
+  const invoices = state.invoices.filter(i => inRange(i.date));
+  const quotes = state.quotes.filter(q => inRange(q.date));
+
+  const totalInvoiced = invoices.reduce((s, i) => s + Number(i.total), 0);
+  const totalCollected = invoices.reduce((s, i) => s + Number(i.amountPaid || 0), 0);
+  const totalOutstanding = totalInvoiced - totalCollected;
+  const acceptedQuotes = quotes.filter(q => q.status === 'accepted' || q.status === 'converted').length;
+  const conversionRate = quotes.length ? Math.round((acceptedQuotes / quotes.length) * 100) : 0;
+
+  const productTotals = {};
+  invoices.forEach(inv => (inv.items || []).forEach(i => {
+    productTotals[i.desc] = (productTotals[i.desc] || 0) + Number(i.qty);
+  }));
+  const topProducts = Object.entries(productTotals).sort((a, b) => b[1] - a[1]).slice(0, 8);
+
+  const clientTotals = {};
+  invoices.forEach(inv => { clientTotals[inv.clientName] = (clientTotals[inv.clientName] || 0) + Number(inv.total); });
+  const topClients = Object.entries(clientTotals).sort((a, b) => b[1] - a[1]).slice(0, 8);
+
+  const body = document.getElementById('reportBody');
+  body.innerHTML = `
+    <div class="grid-3">
+      <div class="card" style="box-shadow:none;"><div class="muted" style="font-size:12.5px;">Total invoiced</div><div class="display" style="font-size:26px;margin-top:6px;">${formatMoneyMixed(totalInvoiced)}</div></div>
+      <div class="card" style="box-shadow:none;"><div class="muted" style="font-size:12.5px;">Total collected</div><div class="display" style="font-size:26px;margin-top:6px;">${formatMoneyMixed(totalCollected)}</div></div>
+      <div class="card" style="box-shadow:none;"><div class="muted" style="font-size:12.5px;">Outstanding</div><div class="display" style="font-size:26px;margin-top:6px;">${formatMoneyMixed(totalOutstanding)}</div></div>
+    </div>
+    <div class="grid-2" style="margin-top:16px;">
+      <div class="card" style="box-shadow:none;">
+        <h3 style="margin-bottom:8px;">Top products sold (by qty)</h3>
+        ${topProducts.length ? `<table><tbody>${topProducts.map(([name, qty]) => `<tr><td>${escapeHtml(name)}</td><td style="text-align:right;">${qty}</td></tr>`).join('')}</tbody></table>` : `<p class="muted">No invoice data in this range yet.</p>`}
+      </div>
+      <div class="card" style="box-shadow:none;">
+        <h3 style="margin-bottom:8px;">Top clients (by revenue)</h3>
+        ${topClients.length ? `<table><tbody>${topClients.map(([name, total]) => `<tr><td>${escapeHtml(name)}</td><td style="text-align:right;">${formatMoneyMixed(total)}</td></tr>`).join('')}</tbody></table>` : `<p class="muted">No invoice data in this range yet.</p>`}
+      </div>
+    </div>
+    <div class="card" style="box-shadow:none; margin-top:16px;">
+      <h3>Quotation conversion</h3>
+      <p class="muted" style="margin-top:6px;">${quotes.length} quotation${quotes.length === 1 ? '' : 's'} in range · ${acceptedQuotes} accepted or converted · <b style="color:var(--ink);">${conversionRate}% conversion rate</b></p>
+    </div>
+  `;
 }
 
 /* ---------------------------------------------------------------------- */
