@@ -261,3 +261,4 @@ tr:last-child td { border-bottom: none; }
 .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .muted { color: var(--ink-soft); }
 .flex-between { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.flex-between { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
