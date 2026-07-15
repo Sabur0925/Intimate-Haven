@@ -491,7 +491,7 @@ function renderQuotesList(c) {
             <button class="link-btn" data-edit-q="${q.id}">Edit</button>
             ${q.status === 'draft' ? `<button class="link-btn" data-send="${q.id}">Mark sent</button>` : ''}
             ${q.status === 'sent' ? `<button class="link-btn" data-accept="${q.id}">Mark accepted</button><button class="link-btn" style="color:var(--danger)" data-decline="${q.id}">Decline</button>` : ''}
-            ${q.status === 'accepted' ? `<button class="link-btn" data-convert="${q.id}">Convert to invoice</button>` : ''}
+            ${q.status === 'accepted' ? `<button class="link-btn" data-convert="${q.id}">Convert to order</button>` : ''}
             <button class="link-btn" style="color:var(--danger)" data-del-q="${q.id}">Delete</button>
           </td>
         </tr>`).join('')}
@@ -505,8 +505,9 @@ function renderQuotesList(c) {
   c.querySelectorAll('[data-accept]').forEach(b => b.addEventListener('click', () => setQuoteStatus(b.dataset.accept, 'accepted')));
   c.querySelectorAll('[data-decline]').forEach(b => b.addEventListener('click', () => setQuoteStatus(b.dataset.decline, 'declined')));
   c.querySelectorAll('[data-convert]').forEach(b => b.addEventListener('click', async () => {
-    const res = await api('convertQuoteToInvoice', { id: b.dataset.convert });
-    if (res.ok) { toast('Converted to invoice ' + res.number); await loadAllData(); state.view = 'invoices'; renderApp(); }
+    if (!confirm("Convert this quotation to an order? Use this once the customer has paid or sent a purchase order.")) return;
+    const res = await api('convertQuoteToOrder', { id: b.dataset.convert });
+    if (res.ok) { toast('Converted to order ' + res.number); await loadAllData(); state.view = 'orders'; renderApp(); }
     else toast(res.error);
   }));
   c.querySelectorAll('[data-del-q]').forEach(b => b.addEventListener('click', async () => {
@@ -530,47 +531,34 @@ async function setQuoteStatus(id, status) {
 function renderInvoicesList(c) {
   c.innerHTML = `
     <div class="flex-between">
-      <div><div class="section-title">Invoices</div><div class="section-sub">Bill clients and track payments.</div></div>
+      <div><div class="section-title">Invoices</div><div class="section-sub">Bill clients once their order has been delivered, and track payments.</div></div>
       <button class="btn btn-primary" id="newInvoiceBtn">+ New invoice</button>
     </div>
     <div class="card">
-      ${state.invoices.length ? `<div class="table-wrap"><table><thead><tr><th>Number</th><th>Date</th><th>Client</th><th>Total</th><th>Paid</th><th>Status</th><th></th></tr></thead><tbody>
+      ${state.invoices.length ? `<div class="table-wrap"><table><thead><tr><th>Number</th><th>Date</th><th>Client</th><th>From order</th><th>Total</th><th>Paid</th><th>Status</th><th></th></tr></thead><tbody>
         ${state.invoices.map(i => `<tr>
-          <td>${i.number}</td><td>${formatDate(i.date)}</td><td>${escapeHtml(i.clientName)}</td><td>${formatMoney(i.total, i.currency)}</td><td>${formatMoney(i.amountPaid, i.currency)}</td>
+          <td>${i.number}</td><td>${formatDate(i.date)}</td><td>${escapeHtml(i.clientName)}</td><td>${escapeHtml(i.orderNumber) || '—'}</td><td>${formatMoney(i.total, i.currency)}</td><td>${formatMoney(i.amountPaid, i.currency)}</td>
           <td><span class="badge badge-${i.status}">${i.status}</span></td>
           <td class="row-actions">
             <button class="link-btn" data-pdf="${i.id}">PDF</button>
             <button class="link-btn" data-edit-i="${i.id}">Edit</button>
             ${i.status !== 'paid' ? `<button class="link-btn" data-pay="${i.id}">Record payment</button>` : ''}
-            <button class="link-btn" data-order="${i.id}">Create order</button>
             <button class="link-btn" style="color:var(--danger)" data-del-i="${i.id}">Delete</button>
           </td>
         </tr>`).join('')}
-      </tbody></table></div>` : `<div class="empty-state">No invoices yet. Create your first one, or convert an accepted quotation.</div>`}
+      </tbody></table></div>` : `<div class="empty-state">No invoices yet. Create one directly, or deliver an order to convert it automatically.</div>`}
     </div>
   `;
   document.getElementById('newInvoiceBtn').addEventListener('click', () => openDocEditor('invoice'));
   c.querySelectorAll('[data-pdf]').forEach(b => b.addEventListener('click', () => exportPdf('invoice', state.invoices.find(x => x.id === b.dataset.pdf))));
   c.querySelectorAll('[data-edit-i]').forEach(b => b.addEventListener('click', () => openDocEditor('invoice', state.invoices.find(x => x.id === b.dataset.editI))));
   c.querySelectorAll('[data-pay]').forEach(b => b.addEventListener('click', () => openPaymentModal(state.invoices.find(x => x.id === b.dataset.pay))));
-  c.querySelectorAll('[data-order]').forEach(b => b.addEventListener('click', () => createOrderFromInvoice(state.invoices.find(x => x.id === b.dataset.order))));
   c.querySelectorAll('[data-del-i]').forEach(b => b.addEventListener('click', async () => {
     if (!confirm('Delete this invoice? This cannot be undone.')) return;
     const res = await api('deleteInvoice', { id: b.dataset.delI });
     if (res.ok) { state.invoices = state.invoices.filter(x => x.id !== b.dataset.delI); renderView(); toast('Invoice deleted.'); }
     else toast(res.error);
   }));
-}
-
-async function createOrderFromInvoice(inv) {
-  if (!inv) return;
-  const payload = {
-    invoiceId: inv.id, invoiceNumber: inv.number, clientId: inv.clientId, clientName: inv.clientName,
-    items: inv.items, currency: inv.currency, total: inv.total, notes: inv.notes
-  };
-  const res = await api('createOrder', { order: payload });
-  if (res.ok) { toast('Order ' + res.number + ' created.'); await loadAllData(); state.view = 'orders'; renderApp(); }
-  else toast(res.error);
 }
 
 function openPaymentModal(inv) {
@@ -657,8 +645,8 @@ function openDocEditor(kind, existingDoc) {
           <select id="edCurrency">${Object.keys(CURRENCIES).map(k => `<option value="${k}" ${k === currency ? 'selected' : ''}>${k} — ${CURRENCIES[k].label}</option>`).join('')}</select>
         </div>
         <div class="field">
-          <label>Discount (flat amount)</label>
-          <input type="number" id="edDiscount" value="${existingDoc?.discount || 0}" step="0.01" />
+          <label>Discount (%)</label>
+          <input type="number" id="edDiscount" value="${existingDoc?.discountPercent != null ? existingDoc.discountPercent : (existingDoc?.discount && existingDoc?.subtotal ? Math.round((existingDoc.discount / existingDoc.subtotal) * 10000) / 100 : 0)}" step="0.01" min="0" max="100" />
         </div>
       </div>
     </div>
@@ -784,12 +772,13 @@ function syncRowTotal(i) {
 
 function computeTotals() {
   const subtotal = editorRows.reduce((s, r) => s + (Number(r.qty) * Number(r.price)), 0);
-  const discount = Number(document.getElementById('edDiscount')?.value || 0);
+  const discountPercent = Number(document.getElementById('edDiscount')?.value || 0);
+  const discount = subtotal * (discountPercent / 100);
   const taxRate = Number(state.settings?.taxRate || 0);
   const taxable = Math.max(subtotal - discount, 0);
   const tax = taxable * (taxRate / 100);
   const total = taxable + tax;
-  return { subtotal, discount, tax, total, taxRate };
+  return { subtotal, discountPercent, discount, tax, total, taxRate };
 }
 
 function renderTotals() {
@@ -799,7 +788,7 @@ function renderTotals() {
   const t = computeTotals();
   box.innerHTML = `
     <div class="row"><span>Subtotal</span><span>${formatMoney(t.subtotal, currency)}</span></div>
-    <div class="row"><span>Discount</span><span>-${formatMoney(t.discount, currency)}</span></div>
+    <div class="row"><span>Discount (${t.discountPercent}%)</span><span>-${formatMoney(t.discount, currency)}</span></div>
     <div class="row"><span>${state.settings?.taxLabel || 'Tax'} (${t.taxRate}%)</span><span>${formatMoney(t.tax, currency)}</span></div>
     <div class="row total"><span>Total</span><span>${formatMoney(t.total, currency)}</span></div>
   `;
@@ -840,7 +829,7 @@ async function saveDoc(kind) {
 
   const payload = {
     clientId, clientName, clientPhone, clientEmail, clientAddress, items, currency,
-    subtotal: t.subtotal, discount: t.discount, tax: t.tax, total: t.total, notes, date
+    subtotal: t.subtotal, discountPercent: t.discountPercent, discount: t.discount, tax: t.tax, total: t.total, notes, date
   };
   if (kind === 'quote') payload.validUntil = date2; else payload.dueDate = date2;
 
@@ -906,7 +895,7 @@ async function exportPdf(kind, doc) {
       </table>
       <div class="doc-totals">
         <div class="row"><span>Subtotal</span><span>${formatMoney(doc.subtotal, doc.currency)}</span></div>
-        <div class="row"><span>Discount</span><span>-${formatMoney(doc.discount, doc.currency)}</span></div>
+        <div class="row"><span>Discount${doc.discountPercent ? ` (${doc.discountPercent}%)` : ''}</span><span>-${formatMoney(doc.discount, doc.currency)}</span></div>
         <div class="row"><span>${s.taxLabel || 'Tax'}</span><span>${formatMoney(doc.tax, doc.currency)}</span></div>
         <div class="row total"><span>Total</span><span>${formatMoney(doc.total, doc.currency)}</span></div>
         ${kind === 'invoice' ? `<div class="row"><span>Amount paid</span><span>${formatMoney(doc.amountPaid, doc.currency)}</span></div>
@@ -970,32 +959,43 @@ async function exportPdf(kind, doc) {
 /* Orders (fulfillment tracking — usually created from a paid invoice)   */
 /* ---------------------------------------------------------------------- */
 
-const ORDER_STATUSES = ['pending', 'processing', 'shipped', 'delivered', 'cancelled'];
+const ORDER_STATUSES = ['pending', 'processing', 'shipped', 'delivered', 'invoiced', 'cancelled'];
 
 function renderOrders(c) {
   c.innerHTML = `
     <div class="flex-between">
-      <div><div class="section-title">Orders</div><div class="section-sub">Track fulfillment after a sale — from packing to delivery.</div></div>
+      <div><div class="section-title">Orders</div><div class="section-sub">Track fulfillment after a quote is paid for — from packing to delivery.</div></div>
       <button class="btn btn-primary" id="newOrderBtn">+ New order</button>
     </div>
     <div class="card">
-      ${state.orders.length ? `<div class="table-wrap"><table><thead><tr><th>Number</th><th>Date</th><th>Client</th><th>From invoice</th><th>Total</th><th>Status</th><th></th></tr></thead><tbody>
+      ${state.orders.length ? `<div class="table-wrap"><table><thead><tr><th>Number</th><th>Date</th><th>Client</th><th>From quote</th><th>Total</th><th>Status</th><th></th></tr></thead><tbody>
         ${state.orders.map(o => `<tr>
-          <td>${o.number}</td><td>${formatDate(o.date)}</td><td>${escapeHtml(o.clientName)}</td><td>${escapeHtml(o.invoiceNumber) || '—'}</td><td>${formatMoney(o.total, o.currency)}</td>
+          <td>${o.number}</td><td>${formatDate(o.date)}</td><td>${escapeHtml(o.clientName)}</td><td>${escapeHtml(o.quoteNumber) || '—'}</td><td>${formatMoney(o.total, o.currency)}</td>
           <td>
-            <select class="order-status-select" data-order-id="${o.id}" style="padding:5px 8px; border-radius:6px; border:1px solid var(--line);">
-              ${ORDER_STATUSES.map(s => `<option value="${s}" ${o.status === s ? 'selected' : ''}>${s.charAt(0).toUpperCase() + s.slice(1)}</option>`).join('')}
+            <select class="order-status-select" data-order-id="${o.id}" ${o.status === 'invoiced' ? 'disabled' : ''} style="padding:5px 8px; border-radius:6px; border:1px solid var(--line);">
+              ${ORDER_STATUSES.filter(s => s !== 'invoiced').map(s => `<option value="${s}" ${o.status === s ? 'selected' : ''}>${s.charAt(0).toUpperCase() + s.slice(1)}</option>`).join('')}
+              ${o.status === 'invoiced' ? `<option value="invoiced" selected>Invoiced</option>` : ''}
             </select>
           </td>
-          <td class="row-actions"><button class="link-btn" style="color:var(--danger)" data-del-order="${o.id}">Delete</button></td>
+          <td class="row-actions">
+            ${o.status === 'delivered' ? `<button class="link-btn" data-order-to-inv="${o.id}">Convert to invoice</button>` : ''}
+            ${o.status === 'invoiced' ? `<span class="muted" style="font-size:12.5px;">→ ${escapeHtml(o.invoiceNumber)}</span>` : ''}
+            <button class="link-btn" style="color:var(--danger)" data-del-order="${o.id}">Delete</button>
+          </td>
         </tr>`).join('')}
-      </tbody></table></div>` : `<div class="empty-state">No orders yet. Create one from an invoice, or start a new one here.</div>`}
+      </tbody></table></div>` : `<div class="empty-state">No orders yet. Convert an accepted quotation once it's paid for, or start one here.</div>`}
     </div>
   `;
   document.getElementById('newOrderBtn').addEventListener('click', () => openOrderModal());
   c.querySelectorAll('.order-status-select').forEach(sel => sel.addEventListener('change', async () => {
     const res = await api('updateOrderStatus', { id: sel.dataset.orderId, status: sel.value });
-    if (res.ok) { const o = state.orders.find(x => x.id === sel.dataset.orderId); o.status = sel.value; toast('Order status updated.'); }
+    if (res.ok) { const o = state.orders.find(x => x.id === sel.dataset.orderId); o.status = sel.value; renderView(); toast('Order status updated.'); }
+    else toast(res.error);
+  }));
+  c.querySelectorAll('[data-order-to-inv]').forEach(b => b.addEventListener('click', async () => {
+    if (!confirm('Convert this order to an invoice? Use this once the items have been delivered.')) return;
+    const res = await api('convertOrderToInvoice', { id: b.dataset.orderToInv });
+    if (res.ok) { toast('Converted to invoice ' + res.number); await loadAllData(); state.view = 'invoices'; renderApp(); }
     else toast(res.error);
   }));
   c.querySelectorAll('[data-del-order]').forEach(b => b.addEventListener('click', async () => {
@@ -1012,14 +1012,15 @@ function openOrderModal() {
   orderModalRows = [{ desc: '', qty: 1, price: 0 }];
   const wrap = document.createElement('div');
   wrap.className = 'modal-backdrop';
+  const availableQuotes = state.quotes.filter(q => q.status === 'accepted');
   wrap.innerHTML = `
     <div class="modal">
       <h3>New order</h3>
       <div class="field">
-        <label>Base on an existing invoice (optional)</label>
-        <select id="ordInvoice">
+        <label>Base on an accepted quotation (optional)</label>
+        <select id="ordQuote">
           <option value="">— Start blank —</option>
-          ${state.invoices.map(i => `<option value="${i.id}">${i.number} — ${escapeHtml(i.clientName)}</option>`).join('')}
+          ${availableQuotes.map(q => `<option value="${q.id}">${q.number} — ${escapeHtml(q.clientName)}</option>`).join('')}
         </select>
       </div>
       <div class="field"><label>Client name</label><input type="text" id="ordClient" /></div>
@@ -1033,16 +1034,20 @@ function openOrderModal() {
     </div>`;
   document.body.appendChild(wrap);
 
+  let sourceQuote = null;
+
   function renderOrdRows() {
     const box = wrap.querySelector('#ordItemRows');
+    const locked = !!sourceQuote;
     box.innerHTML = orderModalRows.map((r, i) => `
       <div style="display:flex; gap:8px; margin-bottom:8px;">
-        <input type="text" class="ord-desc" value="${escapeHtml(r.desc)}" placeholder="Item" style="flex:2;" />
-        <input type="number" class="ord-qty" value="${r.qty}" placeholder="Qty" style="flex:1;" />
-        <input type="number" class="ord-price" value="${r.price}" placeholder="Price" step="0.01" style="flex:1;" />
-        <button class="btn btn-ghost btn-sm" data-rm-ord="${i}" type="button">✕</button>
+        <input type="text" class="ord-desc" value="${escapeHtml(r.desc)}" placeholder="Item" style="flex:2;" ${locked ? 'disabled' : ''} />
+        <input type="number" class="ord-qty" value="${r.qty}" placeholder="Qty" style="flex:1;" ${locked ? 'disabled' : ''} />
+        <input type="number" class="ord-price" value="${r.price}" placeholder="Price" step="0.01" style="flex:1;" ${locked ? 'disabled' : ''} />
+        ${locked ? '' : `<button class="btn btn-ghost btn-sm" data-rm-ord="${i}" type="button">✕</button>`}
       </div>
     `).join('');
+    if (locked) return;
     box.querySelectorAll('.ord-desc').forEach((el, i) => el.addEventListener('input', () => { orderModalRows[i].desc = el.value; }));
     box.querySelectorAll('.ord-qty').forEach((el, i) => el.addEventListener('input', () => { orderModalRows[i].qty = Number(el.value || 0); }));
     box.querySelectorAll('.ord-price').forEach((el, i) => el.addEventListener('input', () => { orderModalRows[i].price = Number(el.value || 0); }));
@@ -1053,29 +1058,45 @@ function openOrderModal() {
     }));
   }
   renderOrdRows();
-  wrap.querySelector('#ordAddRow').addEventListener('click', () => { orderModalRows.push({ desc: '', qty: 1, price: 0 }); renderOrdRows(); });
+  wrap.querySelector('#ordAddRow').addEventListener('click', () => {
+    if (sourceQuote) return;
+    orderModalRows.push({ desc: '', qty: 1, price: 0 }); renderOrdRows();
+  });
 
-  wrap.querySelector('#ordInvoice').addEventListener('change', (e) => {
-    const inv = state.invoices.find(i => i.id === e.target.value);
-    if (inv) {
-      wrap.querySelector('#ordClient').value = inv.clientName;
-      orderModalRows = inv.items.map(i => ({ desc: i.desc, qty: i.qty, price: i.price }));
-      renderOrdRows();
+  wrap.querySelector('#ordQuote').addEventListener('change', (e) => {
+    sourceQuote = availableQuotes.find(q => q.id === e.target.value) || null;
+    const addBtn = wrap.querySelector('#ordAddRow');
+    const clientField = wrap.querySelector('#ordClient');
+    if (sourceQuote) {
+      clientField.value = sourceQuote.clientName;
+      clientField.disabled = true;
+      addBtn.style.display = 'none';
+      orderModalRows = sourceQuote.items.map(i => ({ desc: i.desc, qty: i.qty, price: i.price }));
+    } else {
+      clientField.disabled = false;
+      addBtn.style.display = 'inline-flex';
     }
+    renderOrdRows();
   });
 
   wrap.querySelector('#ordCancel').addEventListener('click', () => wrap.remove());
   wrap.querySelector('#ordSave').addEventListener('click', async () => {
-    const invId = wrap.querySelector('#ordInvoice').value;
-    const inv = state.invoices.find(i => i.id === invId);
+    // If the whole quote was picked unmodified, convert it properly so the
+    // quote's own status updates and nothing has to be retyped.
+    if (sourceQuote) {
+      if (!confirm('Convert quote ' + sourceQuote.number + ' into this order?')) return;
+      const res = await api('convertQuoteToOrder', { id: sourceQuote.id });
+      if (res.ok) { toast('Order ' + res.number + ' created.'); wrap.remove(); await loadAllData(); state.view = 'orders'; renderApp(); }
+      else toast(res.error);
+      return;
+    }
     const clientName = wrap.querySelector('#ordClient').value.trim();
     if (!clientName) return toast('Please enter a client name.');
     const items = orderModalRows.filter(r => r.desc.trim()).map(r => ({ desc: r.desc, qty: Number(r.qty), price: Number(r.price), lineTotal: Number(r.qty) * Number(r.price) }));
     if (!items.length) return toast('Add at least one item.');
     const total = items.reduce((s, i) => s + i.lineTotal, 0);
     const payload = {
-      invoiceId: inv?.id || '', invoiceNumber: inv?.number || '', clientId: inv?.clientId || '',
-      clientName, items, currency: inv?.currency || state.settings?.defaultCurrency || 'NGN', total,
+      clientName, items, currency: state.settings?.defaultCurrency || 'NGN', subtotal: total, total,
       notes: wrap.querySelector('#ordNotes').value.trim()
     };
     const res = await api('createOrder', { order: payload });
